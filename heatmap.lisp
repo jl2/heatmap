@@ -17,35 +17,26 @@
 (defun map-pt (lat lon width height min-lat max-lat min-lon max-lon)
   (let ((lat (* (1- width) (/ (- lat min-lat) (- max-lat min-lat))))
         (lon (* (1- height) (/ (- lon min-lon) (- max-lon min-lon)))))
-    (cons lat lon)))
+    (values lat lon)))
 
-(defun create-heatmap (file-name dir &optional (width 1600) (height 1200))
+(defun bounding-box (points)
+  (loop for pt in points
+     minimizing (gpx-pt-lat pt) into min-lat
+     maximizing (gpx-pt-lat pt) into max-lat
+     minimizing (gpx-pt-lon pt) into min-lon
+     maximizing (gpx-pt-lon pt) into max-lon
+     minimizing (gpx-pt-ele pt) into min-ele
+     maximizing (gpx-pt-ele pt) into max-ele
+     finally (return (values min-lat max-lat min-lon max-lon min-ele max-ele))))
+
+(defun create-heatmap (file-name dir &optional (width 16000) (height 12000))
   (let* ((files (directory (format nil "~a/*.gpx" dir)))
-         (all-points (apply (curry #'concatenate 'list) (mapcar (compose #'collect-points #'read-gpx) files)))
-         (min-lat (gpx-pt-lat (car all-points)))
-         (max-lat min-lat)
-         (min-lon (gpx-pt-lon (car all-points)))
-         (max-lon min-lon)
-         (min-ele (gpx-pt-ele (car all-points)))
-         (max-ele min-ele))
-    (loop for pt in all-points
-       do
-         (with-slots (lat lon ele) pt
-           (setf min-lat (min lat min-lat))
-           (setf max-lat (max lat max-lat))
-
-           (setf min-lon (min lon min-lon))
-           (setf max-lon (max lon max-lon))
-
-           (setf min-ele (min ele min-ele))
-           (setf max-ele (max ele max-ele))))
-
-    (let ((img (png:make-image height width 3 8)))
-      (dolist (pt all-points)
-        (with-slots (lat lon) pt
-          (let* ((lat-lon (map-pt lat lon height width min-lat max-lat min-lon max-lon))
-                 (lat (car lat-lon))
-                 (lon (cdr lat-lon)))
-            (increment-pixel img (floor lon) (floor lat) 4))))
-      (with-open-file (output file-name :element-type '(unsigned-byte 8) :direction :output :if-exists :supersede)
-        (png:encode img output)))))
+         (all-points (apply (curry #'concatenate 'list) (mapcar (compose #'collect-points #'read-gpx) files))))
+    (multiple-value-bind (min-lat max-lat min-lon max-lon) (bounding-box all-points)
+      (let ((img (png:make-image height width 3 8)))
+        (dolist (pt all-points)
+          (with-slots (lat lon) pt
+            (multiple-value-bind (x-pixel y-pixel) (map-pt lat lon width height min-lat max-lat min-lon max-lon)
+              (increment-pixel img (floor x-pixel) (- (1- height) (floor y-pixel)) 1))))
+        (with-open-file (output file-name :element-type '(unsigned-byte 8) :direction :output :if-exists :supersede)
+          (png:encode img output))))))
